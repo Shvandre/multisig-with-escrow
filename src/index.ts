@@ -1053,23 +1053,19 @@ const orderTypes: OrderType[] = [
     {
         name: "Deploy Escrow",
         fields: {
-            helloField: {
-                name: 'Demo Read-Only Field',
-                type: 'String',
-                readOnly: true,
-                initialValue: 'Hello World'
-            },
             finalDestination: {
                 name: 'Final Destination',
                 type: 'Address'
             },
             approverAddress: {
                 name: 'Approver Address',
-                type: 'Address'
+                type: 'Address',
+                initialValue: '{{CURRENT_MULTISIG_ADDRESS}}',
             },
             returnAddress: {
                 name: 'Return Address',
-                type: 'Address'
+                type: 'Address',
+                initialValue: '{{CURRENT_MULTISIG_ADDRESS}}',
             },
             deadline: {
                 name: 'Deadline',
@@ -1078,9 +1074,16 @@ const orderTypes: OrderType[] = [
             fundsToDeposit: {
                 name: 'Funds to Deposit',
                 type: 'TON'
-            }
+            },
+            YourEscrowContractAddress: {
+                name: 'Your Escrow Contract Address (Save it for futher approve)',
+                type: 'String',
+                readOnly: true,
+                initialValue: '-'
+            },
         },
         makeMessage: async (values): Promise<MakeMessageResult> => {
+            console.error(currentMultisigAddress)
             const escrowContract = Escrow.createFromConfig({
                 approver: values.approverAddress.address,
                 returnAddress: values.returnAddress.address,
@@ -1301,13 +1304,62 @@ const renderNewOrderFields = (orderTypeIndex: number): void => {
             } else {
                 // Inputs support readonly attribute
                 const readonlyAttr = field.readOnly ? ' readonly' : '';
-                const valueAttr = field.initialValue !== undefined ? ` value="${field.initialValue}"` : '';
+                let actualValue = field.initialValue;
+                if (field.initialValue === '{{CURRENT_MULTISIG_ADDRESS}}' && currentMultisigAddress) {
+                    actualValue = currentMultisigAddress
+                }
+                const valueAttr = actualValue !== undefined ? ` value="${actualValue}"` : '';
                 html += `<input id="newOrder_${orderTypeIndex}_${fieldId}"${readonlyAttr}${valueAttr}>`
             }
         }
     }
 
     $('#newOrder_fieldsContainer').innerHTML = html;
+    
+    // Add escrow address auto-update for Deploy Escrow
+    if (orderType.name === "Deploy Escrow") {
+        const updateAddress = () => {
+            try {
+                const inputs = ['finalDestination', 'approverAddress', 'returnAddress', 'deadline']
+                    .map(id => $(`#newOrder_${orderTypeIndex}_${id}`) as HTMLInputElement);
+                const addressField = $(`#newOrder_${orderTypeIndex}_YourEscrowContractAddress`) as HTMLInputElement;
+                
+                if (inputs.some(input => !input?.value)) {
+                    addressField.value = '-';
+                    return;
+                }
+                
+                const validations = [
+                    validateValue('', inputs[0].value, 'Address'),
+                    validateValue('', inputs[1].value, 'Address'), 
+                    validateValue('', inputs[2].value, 'Address'),
+                    validateValue('', inputs[3].value, 'Timestamp')
+                ];
+                
+                if (validations.some(v => v.error)) {
+                    addressField.value = '-';
+                    return;
+                }
+                
+                const escrow = Escrow.createFromConfig({
+                    transferDestination: validations[0].value.address,
+                    approver: validations[1].value.address,
+                    returnAddress: validations[2].value.address,
+                    deadline: validations[3].value
+                });
+                
+                addressField.value = escrow.address.toString();
+            } catch {
+                ($(`#newOrder_${orderTypeIndex}_YourEscrowContractAddress`) as HTMLInputElement).value = '-';
+            }
+        };
+        
+        ['finalDestination', 'approverAddress', 'returnAddress', 'deadline'].forEach(id => {
+             const input = $(`#newOrder_${orderTypeIndex}_${id}`) as HTMLInputElement;
+             if (input) input.addEventListener('input', updateAddress);
+         });
+         updateAddress();
+     }
 }
 
 newOrderTypeSelect.addEventListener('change', (e) => {
