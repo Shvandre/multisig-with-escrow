@@ -4,19 +4,21 @@ import {
     assert,
     equalsAddressLists,
     formatAddressAndUrl,
-    getAddressFormat, sanitizeHTML,
+    getAddressFormat, makeAddressLink, sanitizeHTML,
 } from "../utils/utils";
-import {Address, Cell, Dictionary, fromNano, loadMessageRelaxed, CommonMessageInfoRelaxedInternal} from "@ton/core";
+import {Address, Cell, Dictionary, fromNano, loadMessageRelaxed, CommonMessageInfoRelaxedInternal, CommonMessageInfoRelaxed} from "@ton/core";
 import {cellToArray, endParse} from "./Multisig";
 import {Order, parseOrderData} from "./Order";
 import {MultisigInfo} from "./MultisigChecker";
-import {MyNetworkProvider, sendToIndex} from "../utils/MyNetworkProvider";
+import {MyNetworkProvider, sendToIndex, sendToTonApi} from "../utils/MyNetworkProvider";
 import {intToLockType, JettonMinter, lockTypeToDescription} from "../jetton/JettonMinter";
 import {
+    Op,
     SINGLE_NOMINATOR_POOL_OP_CHANGE_VALIDATOR_ADDRESS,
     SINGLE_NOMINATOR_POOL_OP_WITHDRAW,
     VESTING_INTERNAL_TRANSFER
 } from "./Constants";
+import { Escrow } from "../escrow/Escrow";
 
 export interface MultisigOrderInfo {
     address: AddressInfo;
@@ -125,9 +127,9 @@ export const checkMultisigOrder = async (
 
     const actions = Dictionary.loadDirect(Dictionary.Keys.Uint(8), Dictionary.Values.Cell(), parsedData.order);
 
-    const parseActionBody = async (cell: Cell): Promise<string> => {
+    const parseActionBody = async (msgInfo: CommonMessageInfoRelaxed, body: Cell): Promise<string> => {
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             if (slice.remainingBits === 0 && slice.remainingRefs == 0) {
                 return "Send Toncoins from multisig without comment";
             }
@@ -135,7 +137,47 @@ export const checkMultisigOrder = async (
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
+            const op = slice.loadUint(32);
+            if (op == Op.escrow.top_up) {
+                return `Deploy Escrow and deposit Toncoins to it`;
+            }
+        }
+        catch (e) {
+
+        }
+        
+        try {
+            const slice = body.beginParse();
+            const op = slice.loadUint(32);
+            assert(msgInfo.dest instanceof Address, 'Dest is not address');
+            if (op == Op.escrow.approve_transfer) {
+                // Try to get escrow params, then check if address is valid
+                const provider = new MyNetworkProvider(msgInfo.dest as Address, isTestnet);
+                const escrowContract = Escrow.createFromAddress(msgInfo.dest as Address);
+                const approverAddress = await escrowContract.getApprover(provider);
+                const returnAddress = await escrowContract.getReturnAddress(provider);
+                const deadline = await escrowContract.getDeadline(provider);
+                const transferDestination = await escrowContract.getTransferDestination(provider);
+                const verifiedEscrowContract = Escrow.createFromConfig({
+                    approver: approverAddress,
+                    returnAddress: returnAddress,
+                    deadline: deadline,
+                    transferDestination: transferDestination,
+                });
+                assert(verifiedEscrowContract.address.equals(escrowContract.address), 'Escrow address does not match');
+
+                const res = await sendToTonApi(`accounts/${msgInfo.dest.toString()}`, [], isTestnet);
+                assert(res.status === 'active', 'Escrow not active');
+                
+                return `Approve transfer of ${fromNano(res.balance)} Toncoins from escrow to ${makeAddressLink({address: transferDestination, isBounceable: true, isTestOnly: false})}`;
+            }
+        }
+        catch (e) {
+        }
+
+        try {
+            const slice = body.beginParse();
             const op = slice.loadUint(32);
             if (op == 0) {
                 const text = slice.loadStringTail();
@@ -145,7 +187,7 @@ export const checkMultisigOrder = async (
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const parsed = JettonMinter.parseMintMessage(slice);
             assert(parsed.internalMessage.forwardPayload.remainingBits === 0 && parsed.internalMessage.forwardPayload.remainingRefs === 0, 'Mint forward payload not supported');
             const toAddress = await formatAddressAndUrl(parsed.toAddress, isTestnet)
@@ -154,14 +196,14 @@ export const checkMultisigOrder = async (
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const parsed = JettonMinter.parseTopUp(slice);
             return `Top Up`;
         } catch (e) {
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const parsed = JettonMinter.parseChangeAdmin(slice);
             const newAdminAddress = await formatAddressAndUrl(parsed.newAdminAddress, isTestnet)
             return `Change Admin to ${newAdminAddress}`;
@@ -169,21 +211,21 @@ export const checkMultisigOrder = async (
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const parsed = JettonMinter.parseClaimAdmin(slice);
             return `Claim Admin`;
         } catch (e) {
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const parsed = JettonMinter.parseChangeContent(slice);
             return `Change metadata URL to "${sanitizeHTML(parsed.newMetadataUrl)}"`;
         } catch (e) {
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const parsed = JettonMinter.parseTransfer(slice);
             if (parsed.customPayload) throw new Error('Transfer custom payload not supported');
 
@@ -205,7 +247,7 @@ export const checkMultisigOrder = async (
 
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const parsed = JettonMinter.parseCallTo(slice, JettonMinter.parseSetStatus);
             const userAddress = await formatAddressAndUrl(parsed.toAddress, isTestnet)
             const lockType = intToLockType(parsed.action.newStatus);
@@ -214,7 +256,7 @@ export const checkMultisigOrder = async (
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const parsed = JettonMinter.parseCallTo(slice, JettonMinter.parseTransfer);
             if (parsed.action.customPayload) throw new Error('Force transfer custom payload not supported');
             assert(parsed.action.forwardPayload.remainingBits === 0 && parsed.action.forwardPayload.remainingRefs === 0, 'Force transfer forward payload not supported');
@@ -225,7 +267,7 @@ export const checkMultisigOrder = async (
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const parsed = JettonMinter.parseCallTo(slice, JettonMinter.parseBurn);
             if (parsed.action.customPayload) throw new Error('Burn custom payload not supported');
             const userAddress = await formatAddressAndUrl(parsed.toAddress, isTestnet)
@@ -234,7 +276,7 @@ export const checkMultisigOrder = async (
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const op = slice.loadUint(32);
             // https://github.com/ton-blockchain/mytonctrl/blob/master/mytoncore/contracts/single-nominator-pool/single-nominator-code.fc#L98
             if (op === SINGLE_NOMINATOR_POOL_OP_WITHDRAW) {
@@ -246,7 +288,7 @@ export const checkMultisigOrder = async (
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const op = slice.loadUint(32);
             // https://github.com/ton-blockchain/mytonctrl/blob/master/mytoncore/contracts/single-nominator-pool/single-nominator-code.fc#L106
             if (op === SINGLE_NOMINATOR_POOL_OP_CHANGE_VALIDATOR_ADDRESS) {
@@ -260,7 +302,7 @@ export const checkMultisigOrder = async (
         }
 
         try {
-            const slice = cell.beginParse();
+            const slice = body.beginParse();
             const op = slice.loadUint(32);
             if (op === VESTING_INTERNAL_TRANSFER) {
                 const queryId = slice.loadUint(64);
@@ -293,7 +335,7 @@ export const checkMultisigOrder = async (
         }
 
 
-        return `<b><span class="error">ATTENTION - Unknown action! This order contains arbitrary actions! Dangerous! Don't sign unless you know exactly what you're doing!</span></b><br>Raw message body data: "${cell.toBoc().toString('base64')}".`;
+        return `<b><span class="error">ATTENTION - Unknown action! This order contains arbitrary actions! Dangerous! Don't sign unless you know exactly what you're doing!</span></b><br>Raw message body data: "${body.toBoc().toString('base64')}".`;
 
     }
 
@@ -347,7 +389,7 @@ export const checkMultisigOrder = async (
 
             const destAddress = await formatAddressAndUrl(info.dest, isTestnet);
             actionString += `<div>Send ${allBalance ? 'ALL BALANCE' : fromNano(info.value.coins)} TON to ${destAddress}</div>`
-            actionString += `<div>${await parseActionBody(messageRelaxed.body)}</div>`
+            actionString += `<div>${await parseActionBody(messageRelaxed.info, messageRelaxed.body)}</div>`
             if (sendMode) {
                 actionString += `<div>Send mode: ${sendModeString.join(', ')}.</div>`
             }

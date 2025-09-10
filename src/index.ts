@@ -1,4 +1,4 @@
-import {Address, beginCell, Cell, fromNano, SendMode, storeMessageRelaxed, toNano} from "@ton/core";
+import {Address, beginCell, Cell, fromNano, SendMode, StateInit, storeMessageRelaxed, toNano} from "@ton/core";
 import {THEME, TonConnectUI} from '@tonconnect/ui'
 import {
     AddressInfo,
@@ -18,6 +18,7 @@ import {checkJettonMinter} from "./jetton/JettonMinterChecker";
 import {storeStateInit} from "@ton/core/src/types/StateInit";
 import {MyNetworkProvider, sendToIndex} from "./utils/MyNetworkProvider";
 import {Order} from "./multisig/Order";
+import {Escrow} from "./escrow/Escrow";
 import {JettonWallet} from "./jetton/JettonWallet";
 import {
     SINGLE_NOMINATOR_POOL_OP_CHANGE_VALIDATOR_ADDRESS,
@@ -607,7 +608,7 @@ $('#order_approveButton').addEventListener('click', async () => {
 
 // NEW ORDER
 
-type FieldType = 'TON' | 'Jetton' | 'Address' | 'URL' | 'Status' | 'String' | 'BOC';
+type FieldType = 'TON' | 'Jetton' | 'Address' | 'URL' | 'Status' | 'String' | 'BOC' | 'Timestamp';
 
 interface ValidatedValue {
     value?: any;
@@ -697,18 +698,37 @@ const validateValue = (fieldName: string, value: string, fieldType: FieldType): 
             } catch (error) {
                 return makeError('Invalid BOC');
             }
+
+        case 'Timestamp':
+            try {
+                const timestamp = new Date(Number(value) * 1000);
+                if (isNaN(timestamp.getTime())) {
+                    throw new Error();
+                }
+                if(timestamp.getTime() < Date.now() / 1000) {
+                    return makeError('Timestamp must be in the future');
+                }
+                return makeValue(timestamp.getTime() / 1000);
+            } catch (error) {
+                return makeError('Invalid Timestamp');
+            }
     }
 }
 
 interface OrderField {
     name: string;
     type: FieldType;
+    // Optional: display-only field flag
+    readOnly?: boolean;
+    // Optional: initial value to display (string form)
+    initialValue?: string;
 }
 
 interface MakeMessageResult {
     toAddress: AddressInfo;
     tonAmount: bigint;
     body: Cell;
+    stateInit?: StateInit;
 }
 
 interface OrderType {
@@ -1029,6 +1049,76 @@ const orderTypes: OrderType[] = [
             }
         }
     },
+
+    {
+        name: "Deploy Escrow",
+        fields: {
+            helloField: {
+                name: 'Demo Read-Only Field',
+                type: 'String',
+                readOnly: true,
+                initialValue: 'Hello World'
+            },
+            finalDestination: {
+                name: 'Final Destination',
+                type: 'Address'
+            },
+            approverAddress: {
+                name: 'Approver Address',
+                type: 'Address'
+            },
+            returnAddress: {
+                name: 'Return Address',
+                type: 'Address'
+            },
+            deadline: {
+                name: 'Deadline',
+                type: 'Timestamp',
+            },
+            fundsToDeposit: {
+                name: 'Funds to Deposit',
+                type: 'TON'
+            }
+        },
+        makeMessage: async (values): Promise<MakeMessageResult> => {
+            const escrowContract = Escrow.createFromConfig({
+                approver: values.approverAddress.address,
+                returnAddress: values.returnAddress.address,
+                deadline: values.deadline,
+                transferDestination: values.finalDestination.address,
+            })
+
+            return {
+                toAddress: {
+                    isBounceable: true,
+                    isTestOnly: false,
+                    address: escrowContract.address
+                },
+                tonAmount: values.fundsToDeposit,
+                // Just the top-up opcode
+                body: beginCell().storeUint(0xa382f950, 32).endCell(),
+                stateInit: escrowContract.init,
+            };
+        }
+    },
+
+    {
+        name: "Approve escrow transfer",
+        fields: {
+            escrowAddress: {
+                name: 'Escrow Address',
+                type: 'Address'
+            },
+        },
+        makeMessage: async (values): Promise<MakeMessageResult> => {
+            return {
+                toAddress: values.escrowAddress,
+                tonAmount: DEFAULT_AMOUNT,
+                body: beginCell().storeUint(0x95ab6c31, 32).endCell(),
+            }
+        }
+    },
+
     {
         name: 'Single nominator pool: Withdraw',
         fields: {
@@ -1200,14 +1290,19 @@ const renderNewOrderFields = (orderTypeIndex: number): void => {
             html += `<div class="label">${field.name}:</div>`
 
             if (field.type === 'Status') {
-                html += `<select id="newOrder_${orderTypeIndex}_${fieldId}">`
+                // Selects don't support readonly, use disabled and mark with data-readonly
+                html += `<select id="newOrder_${orderTypeIndex}_${fieldId}" ${field.readOnly ? 'data-readonly="true" disabled' : ''}>`
                 for (let i = 0; i < LOCK_TYPES.length; i++) {
                     const lockType: LockType = LOCK_TYPES[i] as LockType;
-                    html += `<option value="${lockType}">${lockTypeToDescription(lockType)}</option>`;
+                    const isSelected = field.initialValue !== undefined && field.initialValue === String(lockType);
+                    html += `<option value="${lockType}"${isSelected ? ' selected' : ''}>${lockTypeToDescription(lockType)}</option>`;
                 }
                 html += `</select>`
             } else {
-                html += `<input id="newOrder_${orderTypeIndex}_${fieldId}">`
+                // Inputs support readonly attribute
+                const readonlyAttr = field.readOnly ? ' readonly' : '';
+                const valueAttr = field.initialValue !== undefined ? ` value="${field.initialValue}"` : '';
+                html += `<input id="newOrder_${orderTypeIndex}_${fieldId}"${readonlyAttr}${valueAttr}>`
             }
         }
     }
@@ -1270,7 +1365,16 @@ const setNewOrderDisabled = (isDisabled: boolean) => {
     for (let fieldId in orderType.fields) {
         if (orderType.fields.hasOwnProperty(fieldId)) {
             const input: HTMLInputElement = $(`#newOrder_${orderTypeIndex}_${fieldId}`) as HTMLInputElement;
-            input.disabled = isDisabled;
+            if (!input) continue;
+            const tag = input.tagName ? input.tagName.toLowerCase() : '';
+            const isSelect = tag === 'select';
+            const isReadOnlySelect = isSelect && (input as any).dataset && (input as any).dataset.readonly === 'true';
+            if (isReadOnlySelect) {
+                // Preserve disabled state for read-only selects even in editable mode
+                input.disabled = true;
+            } else {
+                input.disabled = isDisabled;
+            }
         }
     }
 
@@ -1332,6 +1436,11 @@ $('#newOrder_createButton').addEventListener('click', async () => {
             const field = orderType.fields[fieldId];
             const input: HTMLInputElement = $(`#newOrder_${orderTypeIndex}_${fieldId}`) as HTMLInputElement;
             const value = input.value;
+            if (field.readOnly) {
+                // Skip validation for read-only display fields; pass through as-is
+                values[fieldId] = value;
+                continue;
+            }
             const validated = validateValue(field.name, value, field.type);
             if (validated.error) {
                 alert(validated.error)
@@ -1375,6 +1484,7 @@ $('#newOrder_createButton').addEventListener('click', async () => {
     const toAddress = messageParams.toAddress;
     const tonAmount = messageParams.tonAmount;
     const payloadCell = messageParams.body;
+    const stateInit = messageParams.stateInit;
     const expireAt = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30; // 1 month
 
     const actions = Multisig.packOrder([
@@ -1396,6 +1506,7 @@ $('#newOrder_createButton').addEventListener('click', async () => {
                     createdLt: 0n,
                     createdAt: 0
                 },
+                init: stateInit,
                 body: payloadCell
             }
         }

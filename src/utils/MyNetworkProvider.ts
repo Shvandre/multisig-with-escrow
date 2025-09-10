@@ -13,7 +13,7 @@ import {
 } from "@ton/core";
 import {TonClient} from "@ton/ton";
 
-const API_KEY = 'd843619b379084d133f061606beecbf72ae2bf60e0622e808f2a3f631673599b';
+const API_KEY = '0a5ed4bac006e02ff45b9978049612c0b73d3e60962ae8dfffd106d0ff90bbeb';
 
 export const sendToIndex = async (method: string, params: any, isTestnet: boolean) => {
     const mainnetRpc = 'https://toncenter.com/api/v3/';
@@ -43,7 +43,7 @@ export const sendToTonApi = async (method: string, params: any, isTestnet: boole
 
     const headers = {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer AHIQH4F4Y4XR6UIAAAAOGYUHWOWLUS6ZIPEXSCLAPOMMD6FSNMPUKHCIJHIP52YTU4VKURA'
+        'Authorization': 'Bearer AFPJTKEBPOX3AIYAAAAKA2HWOTRNJP5MUCV5DMDCZAAOCPSAYEYS3CILNQVLF2HWKED6USY'
     };
 
     const response = await fetch(rpc + method + '?' + new URLSearchParams(params), {

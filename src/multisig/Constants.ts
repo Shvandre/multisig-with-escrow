@@ -15,6 +15,10 @@ export abstract class Op {
         send_message: 0xf1381e5b,
         update_multisig_params: 0x1d0cfbd3,
     }
+    static readonly escrow = {
+        approve_transfer: 0x95ab6c31,
+        top_up: 0xa382f950,
+    }
 }
 
 export abstract class Errors {
