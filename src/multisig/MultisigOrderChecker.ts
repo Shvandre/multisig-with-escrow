@@ -140,7 +140,8 @@ export const checkMultisigOrder = async (
             const slice = body.beginParse();
             const op = slice.loadUint(32);
             if (op == Op.escrow.top_up) {
-                return `Deploy Escrow and deposit Toncoins to it`;
+                assert(msgInfo.dest instanceof Address, "Dest is not a valid address")
+                return `Deploy Escrow on ${makeAddressLink({address: msgInfo.dest as Address, isBounceable: false, isTestOnly: isTestnet})} and deposit Toncoins to it`;
             }
         }
         catch (e) {

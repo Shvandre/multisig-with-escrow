@@ -701,11 +701,19 @@ const validateValue = (fieldName: string, value: string, fieldType: FieldType): 
 
         case 'Timestamp':
             try {
-                const timestamp = new Date(Number(value) * 1000);
+                let timestamp;
+                // Check if value is from datetime-local input (YYYY-MM-DDTHH:mm format)
+                if (value.includes('T') && value.includes('-')) {
+                    timestamp = new Date(value);
+                } else {
+                    // Legacy: treat as Unix timestamp in seconds
+                    timestamp = new Date(Number(value) * 1000);
+                }
+                
                 if (isNaN(timestamp.getTime())) {
                     throw new Error();
                 }
-                if(timestamp.getTime() < Date.now() / 1000) {
+                if(timestamp.getTime() < Date.now()) {
                     return makeError('Timestamp must be in the future');
                 }
                 return makeValue(timestamp.getTime() / 1000);
@@ -1301,6 +1309,27 @@ const renderNewOrderFields = (orderTypeIndex: number): void => {
                     html += `<option value="${lockType}"${isSelected ? ' selected' : ''}>${lockTypeToDescription(lockType)}</option>`;
                 }
                 html += `</select>`
+            } else if (field.type === 'Timestamp') {
+                // Use datetime-local input for timestamp fields
+                const readonlyAttr = field.readOnly ? ' readonly' : '';
+                let actualValue = field.initialValue;
+                if (field.initialValue === '{{CURRENT_MULTISIG_ADDRESS}}' && currentMultisigAddress) {
+                    actualValue = currentMultisigAddress
+                }
+                // Convert timestamp to datetime-local format if provided
+                let datetimeValue = '';
+                if (actualValue !== undefined && actualValue !== '') {
+                    try {
+                        const date = new Date(Number(actualValue) * 1000);
+                        if (!isNaN(date.getTime())) {
+                            datetimeValue = date.toISOString().slice(0, 16);
+                        }
+                    } catch (e) {
+                        // If conversion fails, leave empty
+                    }
+                }
+                const valueAttr = datetimeValue ? ` value="${datetimeValue}"` : '';
+                html += `<input type="datetime-local" id="newOrder_${orderTypeIndex}_${fieldId}"${readonlyAttr}${valueAttr}>`
             } else {
                 // Inputs support readonly attribute
                 const readonlyAttr = field.readOnly ? ' readonly' : '';
