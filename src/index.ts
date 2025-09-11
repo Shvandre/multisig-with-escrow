@@ -264,7 +264,7 @@ const renderCurrentMultisigInfo = (): void => {
         if (lastOrder.errorMessage) {
             if (lastOrder.errorMessage.startsWith('Contract not active')) return ``;
             if (lastOrder.errorMessage.startsWith('Failed')) {
-                return `<div class="multisig_lastOrder" order-id="${lastOrder.order.id}" order-address="${addressToString(lastOrder.order.address)}"><span class="orderListItem_title">Failed Order #${lastOrder.order.id}</span> — Execution error — <a href="https://tonscan.org/tx/${base64toHex(lastOrder.transactionHash)}" target="_blank">Tx Link</a></div>`;
+                return `<div class="multisig_lastOrder" order-id="${lastOrder.order.id}" order-address="${addressToString(lastOrder.order.address)}"><span class="orderListItem_title">Failed Order #${lastOrder.order.id}</span> — Execution error — <a href="https://${IS_TESTNET ? 'testnet.' : ''}tonscan.org/tx/${base64toHex(lastOrder.transactionHash)}" target="_blank">Tx Link</a></div>`;
             }
             return `<div class="multisig_lastOrder" order-id="${lastOrder.order.id}" order-address="${addressToString(lastOrder.order.address)}"><span class="orderListItem_title">Invalid Order #${lastOrder.order.id}</span> — ${lastOrder.errorMessage}</div>`;
         } else {

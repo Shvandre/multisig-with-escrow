@@ -171,7 +171,7 @@ export const checkMultisigOrder = async (
                 const res = await sendToTonApi(`accounts/${msgInfo.dest.toString()}`, [], isTestnet);
                 assert(res.status === 'active', 'Escrow not active');
                 
-                return `Approve transfer of ${fromNano(res.balance)} Toncoins from escrow to ${makeAddressLink({address: transferDestination, isBounceable: true, isTestOnly: false})}`;
+                return `Approve transfer of ${fromNano(res.balance)} Toncoins from escrow to ${makeAddressLink({address: transferDestination, isBounceable: true, isTestOnly: isTestnet})}`;
             }
         }
         catch (e) {
