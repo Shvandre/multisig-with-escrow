@@ -169,8 +169,10 @@ export const checkMultisigOrder = async (
                 assert(verifiedEscrowContract.address.equals(escrowContract.address), 'Escrow address does not match');
 
                 const res = await sendToTonApi(`accounts/${msgInfo.dest.toString()}`, [], isTestnet);
-                assert(res.status === 'active', 'Escrow not active');
+                if (res.status !== 'active') return "Escrow is not deployed yet, or already transferred funds";
                 
+                if(Date.now() / 1000 >= Number(deadline)) 
+                    return `Deadline passed, sending the transaction will return ${fromNano(res.balance)} Toncoins from escrow to this multisig`;
                 return `Approve transfer of ${fromNano(res.balance)} Toncoins from escrow to ${makeAddressLink({address: transferDestination, isBounceable: true, isTestOnly: isTestnet})}`;
             }
         }

@@ -1114,7 +1114,7 @@ const orderTypes: OrderType[] = [
     },
 
     {
-        name: "Approve escrow transfer",
+        name: "Approve escrow transfer (this will reject transfer if deadline is passed)",
         fields: {
             escrowAddress: {
                 name: 'Escrow Address',
